@@ -14,6 +14,7 @@ env:
   DISCOURSE_DB_SOCKET: /var/run/postgresql
   DISCOURSE_DB_HOST:
   DISCOURSE_DB_PORT:
+  LANG: en_US.UTF-8
 
 
 params:
