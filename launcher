@@ -82,7 +82,7 @@ fi
 
 cd "$(dirname "$0")"
 
-pups_version='v1.0.3'
+pups_version='revert-revert-app-env-support'
 docker_min_version='17.03.1'
 docker_rec_version='17.06.2'
 git_min_version='1.8.0'
@@ -299,17 +299,21 @@ set_template_info() {
 
     # we always want our config file last so it takes priority
     input="$input _FILE_SEPERATOR_ $config_data"
+    tmp_input_file=$(mktemp)
+    echo "$input" > "$tmp_input_file"
 
-    read -r -d '' env_ruby << 'RUBY'
+    # We only need to read the hostname related variables, all other environment
+    # is processed by pups.
+
+    read -r -d '' hostname_vars_ruby << 'RUBY'
     require 'yaml'
 
     input=STDIN.readlines.join
-    # default to UTF-8 for the dbs sake
-    env = {'LANG' => 'en_US.UTF-8'}
+    hostname_vars = {}
     input.split('_FILE_SEPERATOR_').each do |yml|
        yml.strip!
        begin
-         env.merge!(YAML.load(yml)['env'] || {})
+         hostname_vars.merge!(YAML.load(yml)['env'] || {})
        rescue Psych::SyntaxError => e
         puts e
         puts "*ERROR."
@@ -318,16 +322,11 @@ set_template_info() {
         p e
        end
     end
-    env.each{|k,v| puts "*ERROR." if v.is_a?(Hash)}
-    puts env.map{|k,v| "-e\n#{k}=#{v}" }.join("\n")
+    to_check = ['DOCKER_USE_HOSTNAME', 'DISCOURSE_HOSTNAME']
+    puts hostname_vars.map{|k,v| "-e\n#{k}=#{v}" if to_check.include?(k)}.join("\n")
 RUBY
 
-    tmp_input_file=$(mktemp)
-
-    echo "$input" > "$tmp_input_file"
-    raw=`exec cat "$tmp_input_file" | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e "$env_ruby"`
-
-    rm -f "$tmp_input_file"
+    raw=`exec cat "$tmp_input_file" | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e "$hostname_vars_ruby"`
 
     env=()
     ok=1
@@ -366,12 +365,7 @@ RUBY
     puts labels.map{|k,v| "-l\n#{k}=#{v}" }.join("\n")
 RUBY
 
-    tmp_input_file=$(mktemp)
-
-    echo "$input" > "$tmp_input_file"
     raw=`exec cat "$tmp_input_file" | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e "$labels_ruby"`
-
-    rm -f "$tmp_input_file"
 
     labels=()
     ok=1
@@ -410,9 +404,6 @@ RUBY
     puts ports.map { |p| p.to_s.include?(':') ? "-p\n#{p}" : "--expose\n#{p}" }.join("\n")
 RUBY
 
-    tmp_input_file=$(mktemp)
-
-    echo "$input" > "$tmp_input_file"
     raw=`exec cat "$tmp_input_file" | $docker_path run $user_args --rm -i -a stdin -a stdout $image ruby -e "$ports_ruby"`
 
     rm -f "$tmp_input_file"
@@ -433,7 +424,7 @@ RUBY
       exit 1
     fi
 
-   merge_user_args
+    merge_user_args
 }
 
 if [ -z $docker_path ]; then
@@ -597,7 +588,7 @@ run_start() {
 
      set -x
 
-     $docker_path run --shm-size=512m $links $attach_on_run $restart_policy "${env[@]}" "${labels[@]}" -h "$hostname" \
+     $docker_path run --shm-size=512m $links $attach_on_run $restart_policy -e "env_template_${config}" "${labels[@]}" -h "$hostname" \
         -e DOCKER_HOST_IP="$docker_ip" --name $config -t "${ports[@]}" $volumes $mac_address $user_args \
         $run_image $boot_command
 
